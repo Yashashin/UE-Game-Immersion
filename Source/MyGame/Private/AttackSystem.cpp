@@ -338,7 +338,7 @@ void UAttackSystem::SetWarpingTarget(UAnimMontage* Montage)
 		FMotionWarpingTarget* Target = new FMotionWarpingTarget();
 		Target->Name = TargetName;
 		Target->Rotation = LookAtRotation;
-		MyGameCharacterPtr->MotionWarpingComponent->AddOrUpdateWarpTarget(*Target);
+		MyGameCharacterPtr->MotionWarping->AddOrUpdateWarpTarget(*Target);
 	}
 }
 

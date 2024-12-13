@@ -134,7 +134,13 @@ void UInputSystem::SetupInputBinding(UInputComponent* PlayerInputComponent)
 		// Right button pressed (Pistol/Melee)
 		EnhancedInputComponent->BindAction(RightButtonAction, ETriggerEvent::Started, this, &UInputSystem::OnRightButtonPressed);
 
-		// R1 button released (Equipment Swap)
+		// L1 button pressed (Start sprinting)
+		EnhancedInputComponent->BindAction(L1ButtonAction, ETriggerEvent::Started, this, &UInputSystem::OnL1ButtonPressed);
+
+		// L1 button released (Stop sprinting)
+		EnhancedInputComponent->BindAction(L1ButtonAction, ETriggerEvent::Completed, this, &UInputSystem::OnL1ButtonReleased);
+
+		// R1 button released (Equipment swap)
 		EnhancedInputComponent->BindAction(R1ButtonAction, ETriggerEvent::Completed, this, &UInputSystem::OnR1ButtonReleased);
 
 		// L2 button pressed/released (Aiming)
@@ -168,7 +174,15 @@ void UInputSystem::SetupInputBinding(UInputComponent* PlayerInputComponent)
 
 		// Cover
 		//EnhancedInputComponent->BindAction(InputSystem->CoverAction, ETriggerEvent::Started, this, &AMyGameCharacter::Cover);
+
+
+		LStickActionBinding = &EnhancedInputComponent->BindActionValue(LStickAction);
 	}
+}
+
+FInputActionValue UInputSystem::GetLStickActionValue()
+{
+	return LStickActionBinding->GetValue();
 }
 
 void UInputSystem::OnSquareButtonPressed()
@@ -197,7 +211,7 @@ void UInputSystem::OnCircleButtonPressed()
 	if (MyGameCharacter.IsValid())
 	{
 		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
-		MyGameCharacter->Crouch();
+		MyGameCharacter->ToggleCrouched();
 	}
 }
 
@@ -207,7 +221,31 @@ void UInputSystem::OnCrossButtonPressed()
 	if (MyGameCharacter.IsValid())
 	{
 		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
-		MyGameCharacter->Jump();
+		
+		/* Currently written in blueprint for traversal checking */
+		//MyGameCharacter->Jump();
+	}
+}
+
+void UInputSystem::OnL1ButtonPressed()
+{
+	// Start sprinting
+	if (MyGameCharacter.IsValid())
+	{
+		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
+
+		MyGameCharacter->StartSprinting();
+	}
+}
+
+void UInputSystem::OnL1ButtonReleased()
+{
+	// Stop sprinting
+	if (MyGameCharacter.IsValid())
+	{
+		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
+
+		MyGameCharacter->StopSprinting();
 	}
 }
 
@@ -246,7 +284,7 @@ void UInputSystem::OnR2ButtonPressed()
 	if (MyGameCharacter.IsValid())
 	{
 		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
-		if (MyGameCharacterPtr->MyMovementMode == EMyMovementMode::Aiming)
+		if (MyGameCharacterPtr->MotionMode == EMotionMode::Aiming)
 		{
 			// Start firing
 			MyGameCharacterPtr->StartFiring();
@@ -264,7 +302,7 @@ void UInputSystem::OnR2ButtonReleased()
 	if (MyGameCharacter.IsValid())
 	{
 		AMyGameCharacter* MyGameCharacterPtr = MyGameCharacter.Get();
-		if (MyGameCharacterPtr->MyMovementMode == EMyMovementMode::Aiming)
+		if (MyGameCharacterPtr->MotionMode == EMotionMode::Aiming)
 		{
 			// End firing
 			MyGameCharacterPtr->StopFiring();

@@ -74,7 +74,7 @@ void UCoverSystem::AttachToCover(FHitResult HitResult)
 	Target->Name = FName("WalkToCoverWarp");
 	Target->Location = TargetLocation;
 	Target->Rotation = TargetRotation;
-	MyGameCharacter->MotionWarpingComponent->AddOrUpdateWarpTarget(*Target);
+	MyGameCharacter->MotionWarping->AddOrUpdateWarpTarget(*Target);
 
 	UAnimInstance* AnimInstance = MyGameCharacter->GetMesh()->GetAnimInstance();
 	AnimInstance->Montage_Play(StandToCoverMontage);

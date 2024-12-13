@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Logging/LogMacros.h"
-#include "Components/TimelineComponent.h"
+#include "MovementStruct.h"
 #include "AssassinateInterface.h"
+#include "Components/TimelineComponent.h"
+#include "Enums.h"
 #include "MyGameCharacter.generated.h"
 
 
@@ -23,41 +25,11 @@ class UPlayerStats;
 class UShootingSystem;
 class UEquipmentManager;
 class UMotionWarpingComponent;
+
 struct FInputActionValue;
+//struct FTimeline;
+//struct FOnTimelineFloat;
 
-UENUM(BlueprintType)
-enum class EMyMovementMode : uint8
-{
-	Locomotion UMETA(DisplayName = "Locomotion"),
-	Aiming UMETA(DisplayName = "Aiming"),
-	Attacking UMETA(DisplayName = "Attacking"),
-	Vaulting UMETA(DisplayName = "Vaulting"),
-	Rolling UMETA(DisplayName = "Rolling"),
-	//PickingItem UMETA(DisplayName = "Picking Item"),
-	Climbing UMETA(DisplayName = "Climbing"),
-	Covering UMETA(DisplayName = "Covering"),
-	None UMETA(DisplayName = "None"),
-};
-
-UENUM(BlueprintType)
-enum class ECameraState : uint8
-{
-	Normal UMETA(DisplayName = "Normal"),
-	Far UMETA(DisplayName = "Far"),
-	Close UMETA(DisplayName = "Close"),
-	Indoor UMETA(DisplayName = "Indoor"),
-	Aiming  UMETA(DisplayName = "Aiming"),
-	Death UMETA(DisplayName = "Death"),
-};
-
-UENUM(BlueprintType)
-enum class EUpdateUI : uint8
-{
-	HUD_EquipmentIcon UMETA(DisplayName = "HUD Equipment Icon"),
-	HUD_AmmoCount UMETA(DisplayName = "HUD Ammo Count"),
-	HUD_HealthBar UMETA(DisplayName = "HUD Health Bar"),
-	Crosshair UMETA(DisplayName = "Crosshair"),
-};
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 
@@ -81,8 +53,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
 	TSubclassOf<UCameraShakeBase> AimingCameraShakeClass;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timeline")
+	TObjectPtr<UCurveFloat> TimelineDefaultCurve;
+
 	UPROPERTY(EditAnywhere, Category = "Vault")  // Set in blueprint
-	TObjectPtr<UAnimMontage> VaultMontage;
+		TObjectPtr<UAnimMontage> VaultMontage;
 
 	UPROPERTY(VisibleAnywhere, Category = "Vault")
 	FVector VaultStartPos = FVector::Zero();
@@ -94,27 +69,39 @@ public:
 	FVector VaultLandPos = FVector::Zero();
 
 	UPROPERTY(EditAnywhere, Category = "Assassinate") // Set in blueprint
-	TObjectPtr<UAnimMontage> AssassinateMontage;
+		TObjectPtr<UAnimMontage> AssassinateMontage;
 
 	UPROPERTY(EditAnywhere, Category = "Roll") // Set in blueprint
-	TObjectPtr<UAnimMontage> RollForwardMontage;
+		TObjectPtr<UAnimMontage> RollForwardMontage;
 
 	UPROPERTY(EditAnywhere, Category = "Roll") // Set in blueprint
-	TObjectPtr<UAnimMontage> RollBackwardMontage;
+		TObjectPtr<UAnimMontage> RollBackwardMontage;
 
 	UPROPERTY(EditAnywhere, Category = "Death") // Set in blueprint
-	TArray<TObjectPtr<UAnimMontage>> NormalDeathMontages;
+		TArray<TObjectPtr<UAnimMontage>> NormalDeathMontages;
 
 	UPROPERTY(EditAnywhere, Category = "Death") // Set in blueprint
-	TArray<TObjectPtr<UAnimMontage>> AimingDeathMontages;
+		TArray<TObjectPtr<UAnimMontage>> AimingDeathMontages;
 
 	UPROPERTY(EditAnywhere, Category = "Death") // Set in blueprint
-	TArray<TObjectPtr<UAnimMontage>> ProneDeathMontages;
+		TArray<TObjectPtr<UAnimMontage>> ProneDeathMontages;
 
-	// My movement mode defined by custom states.
-	// Since it's an enumeration, the character can't be in multiple states at the same time.
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Character State")
-	EMyMovementMode MyMovementMode = EMyMovementMode::Locomotion;
+	// My motion mode defined by custom actions.
+	// Since it's an enumeration, the character can't be in multiple modes at the same time.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	EMotionMode MotionMode = EMotionMode::Locomotion;
+
+	/*UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	EMyMovementMode MovementMode = EMyMovementMode::OnGround;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	EMovementState MovementState = EMovementState::Idle;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	EStance Stance = EStance::Stand;*/
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	EGait Gait = EGait::Walk;
 
 	// Is character holding weapon?
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Character State")
@@ -130,7 +117,14 @@ public:
 
 	// Is character dead?
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
-	bool isDead = false;
+	bool bIsDead = false;
+
+	// Does character want to sprint?
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	bool bWantsToSprint = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Curve") // Set in blueprint
+		TObjectPtr<UCurveFloat> StrafeSpeedMapCurve;
 
 	// Right arm animation blending weight
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blending Weight")
@@ -141,8 +135,8 @@ public:
 	float UpperBodyBlendWeight = 0.0f;
 
 	// Actor component for motion warping
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Player Component")
-	TObjectPtr<UMotionWarpingComponent> MotionWarpingComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player Component")
+	TObjectPtr<UMotionWarpingComponent> MotionWarping;
 
 	// Actor component for player stats
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player Component")
@@ -186,20 +180,34 @@ public:
 	TObjectPtr<USkeletalMeshComponent> VirtualMesh;
 
 	// Multiplier for sensitivity yaw angle
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Custom Settings", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Custom", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
 		float NormalSensitivityYaw = 1.0f;
 
 	// Multiplier for sensitivity pitch angle
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Custom Settings", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Custom", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
 		float NormalSensitivityPitch = 1.0f;
 
 	// Multiplier for sensitivity yaw angle while aiming
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Custom Settings", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Custom", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
 		float AimingSensitivityYaw = 1.0f;
 
 	// Multiplier for sensitivity pitch angle while aiming
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Custom Settings", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Custom", meta = (ClampMin = 0.1, ClampMax = 2)) // Set in blueprint
 		float AimingSensitivityPitch = 1.0f;
+
+	// Threshold for walk and run. Stick analog below this value is walking and above this is running. 
+	// Sprinting does not take this value into account.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings | Developer", meta = (ClampMin = 0.1, ClampMax = 0.9)) // Set in blueprint
+		float AnalogInputWalkRunThreshold = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings | Developer") // Set in blueprint
+		FMovementSpeedsSet MovementSpeedsSet;
+
+	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Developer") // Set in blueprint
+	//	TUniquePtr <FMovementSpeeds> ArmedSpeeds;
+
+	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings | Developer") // Set in blueprint
+	//	TUniquePtr <FMovementSpeeds> AimingSpeeds;
 
 private:
 	TObjectPtr<ACharacter> LockedTarget;
@@ -207,8 +215,10 @@ private:
 	// Access my game instance
 	TWeakObjectPtr<UMyGameInstance> MyGameInstance;
 
+	FTimeline CrouchTimeline;
+
 	// Timeline callback binding delegate
-	FOnTimelineFloat CamDistananceTimelineDelegate;
+	FOnTimelineFloat CrouchTimelineDelegate;
 
 	// Vault animation montage end binding delegate 
 	FOnMontageEnded VaultMontageEndDelegate;
@@ -218,9 +228,9 @@ private:
 public:
 	AMyGameCharacter();
 
-	/** Timeline callback function */
-	UFUNCTION(BlueprintCallable)
-	void CameDistanceTimelineReturn(float value);
+	/** Crouch timeline callback function */
+	UFUNCTION()
+	void CrouchTimelineReturn(float value);
 
 	UFUNCTION(BlueprintCallable)
 	void VaultMotionWarp();
@@ -251,6 +261,10 @@ public:
 
 	void StopFiring();
 
+	void StartSprinting();
+
+	void StopSprinting();
+
 	void Reload();
 
 	void SwitchEquipmentUp();
@@ -265,18 +279,18 @@ public:
 
 	virtual void Jump() override;
 
-	virtual void Crouch(bool bClientSimulation = false) override;
+	void ToggleCrouched();
 
 	UFUNCTION(BlueprintCallable)
 	void Ragdoll();
 
 	UFUNCTION(BlueprintPure)
-	bool IsAiming() const { return MyMovementMode == EMyMovementMode::Aiming; }
+	bool IsAiming() const { return MotionMode == EMotionMode::Aiming; }
 
 	UFUNCTION(BlueprintPure)
 	bool ShouldDoLeftHandIK() const;
 
-	/** This function is overridden in blueprint to notify a UI update event. */
+	/** This function is overridden in blueprint that used to notify a UI update event. */
 	UFUNCTION(BlueprintImplementableEvent)
 	void UpdateUINotify(EUpdateUI UpdateType);
 
@@ -297,12 +311,6 @@ private:
 	/** Called for assassinate input */
 	void Assassinate();
 
-	/** Called for sprint start input */
-	void SprintStart();
-
-	/** Called for sprint end input */
-	void SprintEnd();
-
 	/** Called for lock input */
 	void ToggleLock();
 
@@ -320,5 +328,27 @@ private:
 	bool IsMovingForward() const;
 
 	void Roll();
+
+	/** This function is used to update the Gait value and use it to set the max walk speeds of the character movement component.*/
+	void UpdateGait();
+
+	/** Return desired gait.*/
+	EGait GetDesiredGait() const;
+
+	float CalculateMaxAcceleration() const;
+
+	float CalculateBrakingDeceleration() const;
+
+	float CalculateGroundFriction() const;
+
+	/** This function is used to set the max speed for the character¡¦s movement.
+		Because the forwards, strafes, and backwards animations move at different speeds, we need to change the max speed of the character based on its movement direction.
+		We use a simple curve to map different speed values to the different directions. 0 = forward, 1 = strafe L or R, 2 = Backwards.
+		Return X for walk speed and Y for crouch speed.
+	*/
+	FVector2D CalculateMaxSpeed() const;
+
+	bool CanSprint() const;
+
 };
 

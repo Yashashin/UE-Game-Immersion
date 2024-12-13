@@ -8,6 +8,7 @@ class AMyGameCharacter;
 class UInputMappingContext;
 class UInputAction;
 struct FInputActionValue;
+struct FEnhancedInputActionValueBinding;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class MYGAME_API UInputSystem : public UActorComponent
@@ -137,11 +138,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> R3ButtonAction;
 
-
-
 private:
 	// Access my game character
 	TWeakObjectPtr<AMyGameCharacter> MyGameCharacter;
+
+	// We can get action value from this action binding
+	FEnhancedInputActionValueBinding* LStickActionBinding;
 
 public:
 	UInputSystem();
@@ -150,11 +152,14 @@ public:
 
 	void SetupInputBinding(UInputComponent* PlayerInputComponent);
 
+	/**  Retrun L stick input value */
+	FInputActionValue GetLStickActionValue();
+
 protected:
 	virtual void BeginPlay() override;
 	
 private:
-	// Init function call in BeginPlay
+	/**  Init function call in BeginPlay */
 	void Init();
 
 	/** Called for L stick input (Move) */
@@ -197,7 +202,13 @@ private:
 	UFUNCTION()
 	void OnCrossButtonPressed();
 
+	/** Called for L1 pressed input (Start sprinting) */
+	UFUNCTION()
 	void OnL1ButtonPressed();
+
+	/** Called for L1 released input (Start sprinting) */
+	UFUNCTION()
+	void OnL1ButtonReleased();
 
 	/** Called for L2 button pressed input (Start aiming) */
 	UFUNCTION()

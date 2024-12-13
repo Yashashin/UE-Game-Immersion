@@ -112,13 +112,13 @@ void UClimbSystem::CalculateMantleLedge()
 					Target->Name = FName("LedgeClimbUp");
 					Target->Location = FVector(ActorLocation.X + MyGameCharacter->GetActorForwardVector().X * MANTLE_LEDGE_WARP_X_FORWARD, ActorLocation.Y + MyGameCharacter->GetActorForwardVector().Y * MANTLE_LEDGE_WARP_Y_FORWARD, SecondHitResult.Location.Z);
 					Target->Rotation = MyGameCharacter->GetActorRotation();
-					MyGameCharacter->MotionWarpingComponent->AddOrUpdateWarpTarget(*Target);
+					MyGameCharacter->MotionWarping->AddOrUpdateWarpTarget(*Target);
 
 					FMotionWarpingTarget* Target2 = new FMotionWarpingTarget();
 					Target2->Name = FName("LedgeClimbForward");
 					Target2->Location = FVector(SecondHitResult.Location.X, SecondHitResult.Location.Y, ActorLocation.Z + 115.0f);
 					Target2->Rotation = MyGameCharacter->GetActorRotation();
-					MyGameCharacter->MotionWarpingComponent->AddOrUpdateWarpTarget(*Target2);
+					MyGameCharacter->MotionWarping->AddOrUpdateWarpTarget(*Target2);
 
 					UAnimInstance* AnimInstance = MyGameCharacter->GetMesh()->GetAnimInstance();
 					AnimInstance->Montage_Play(MantleLedgeMontage);

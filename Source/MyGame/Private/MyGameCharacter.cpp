@@ -3,7 +3,10 @@
 
 #include "Engine/LocalPlayer.h"
 #include "Camera/CameraComponent.h"
+#include "Curves/CurveFloat.h"
 #include "Components/CapsuleComponent.h"
+
+
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Controller.h"
@@ -12,6 +15,7 @@
 
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "KismetAnimationLibrary.h"
 
 #include "AttackSystem.h"
 #include "InputSystem.h"
@@ -40,12 +44,8 @@ DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 #define SPRINT_MAX_WALK_SPEED 800.0f
 
 // Crouch
-#define CROUCH_MAX_SPEED 350.0f
-#define CROUCH_CAMERA_DISTANCE 550.0f
-#define UNCROUCH_TRACE_DISTANCE 115.0f
+#define UNCROUCH_TRACE_DISTANCE 100.0f
 #define UNCROUCH_TRACE_SIZE 10.0f
-#define WALK_CAPSULE_HEIGHT 90.0f
-#define CROUCH_CAPSULE_HEIGHT 60.0f
 
 // Lock
 #define LOCK_TRACE_DISTANCE 1500.0f
@@ -73,10 +73,6 @@ AMyGameCharacter::AMyGameCharacter()
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(45.0f, 90.0f);
 
-	//bUseControllerRotationPitch = false;
-	//bUseControllerRotationRoll = false;
-	//bUseControllerRotationYaw = false;
-
 	// Configure character movement
 	GetCharacterMovement()->bOrientRotationToMovement = false; // Character doesn't move in the direction of input
 	GetCharacterMovement()->bUseControllerDesiredRotation = true; // Character moves in the direction of controller rotation	
@@ -92,14 +88,16 @@ AMyGameCharacter::AMyGameCharacter()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName); // Attach the camera to the end of the boom and let the boom adjust to match the controller orientation
 	FollowCamera->bUsePawnControlRotation = false; // Camera does not rotate relative to arm
 
-	CamDistananceTimelineDelegate.BindUFunction(this, "CameDistanceTimelineReturn");
+
+	// Crouch timeline
+	CrouchTimelineDelegate.BindUFunction(this, "CrouchTimelineReturn");
 
 	// Bind delegates
 	VaultMontageEndDelegate.BindUFunction(this, "OnVaultMontageEnd");
 	RollMontageEndDelegate.BindUFunction(this, "OnRollMontageEnd");
 
 	// Create player components
-	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("Motion Warping"));
+	MotionWarping = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
 	PlayerStats = CreateDefaultSubobject<UPlayerStats>(TEXT("Player Stats"));
 	AttackSystem = CreateDefaultSubobject<UAttackSystem>(TEXT("Attack System"));
 	EquipmentSystem = CreateDefaultSubobject<UEquipmentSystem>(TEXT("Equipment System"));
@@ -121,7 +119,7 @@ void AMyGameCharacter::BeginPlay()
 	Super::BeginPlay();
 
 
-	// Game instance and create widgets
+	// Game instance and create widget
 	MyGameInstance = Cast<UMyGameInstance>(GetGameInstance());
 	if (MyGameInstance.IsValid())
 	{
@@ -136,6 +134,9 @@ void AMyGameCharacter::BeginPlay()
 	EquipmentSystem->Init();
 	ClimbSystem->Init();
 	CoverSystem->Init();
+
+	CrouchTimeline.AddInterpFloat(TimelineDefaultCurve, CrouchTimelineDelegate);
+	CrouchTimeline.SetLooping(false);
 }
 
 void AMyGameCharacter::Tick(float DeltaTime)
@@ -149,12 +150,20 @@ void AMyGameCharacter::Tick(float DeltaTime)
 
 		Controller->SetControlRotation(LookAtRotation);
 	}
+
+	// Timeline
+	if (CrouchTimeline.IsPlaying())
+	{
+		CrouchTimeline.TickTimeline(DeltaTime);
+	}
+
+	UpdateGait();
 }
 
 float AMyGameCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
 	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
-	bool bIsDead = PlayerStats->DecreaseCurrentHealth(DamageAmount);
+	bIsDead = PlayerStats->DecreaseCurrentHealth(DamageAmount);
 	if (bIsDead)
 	{
 		Dead();
@@ -172,7 +181,7 @@ bool AMyGameCharacter::IsMovingForward() const
 
 void AMyGameCharacter::Roll()
 {
-	if (MyMovementMode == EMyMovementMode::Rolling)
+	if (MotionMode == EMotionMode::Rolling)
 	{
 		return;
 	}
@@ -193,7 +202,7 @@ void AMyGameCharacter::Roll()
 
 	}
 	//GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Flying);
-	MyMovementMode = EMyMovementMode::Rolling;
+	MotionMode = EMotionMode::Rolling;
 	//SetActorEnableCollision(false);
 
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
@@ -212,9 +221,25 @@ void AMyGameCharacter::Roll()
 	AnimInstance->Montage_SetEndDelegate(RollMontageEndDelegate, RollForwardMontage);
 }
 
+void AMyGameCharacter::UpdateGait()
+{
+	Gait = GetDesiredGait();
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (MovementComponent)
+	{
+		MovementComponent->MaxAcceleration = CalculateMaxAcceleration();
+		MovementComponent->BrakingDecelerationWalking = CalculateBrakingDeceleration();
+		MovementComponent->GroundFriction = CalculateGroundFriction();
+		FVector2D MaxSpeeds = CalculateMaxSpeed();
+		MovementComponent->MaxWalkSpeed = MaxSpeeds.X;
+		MovementComponent->MaxWalkSpeedCrouched = MaxSpeeds.Y;
+	}
+}
+
 bool AMyGameCharacter::ShouldDoLeftHandIK() const
 {
-	
+
 	bool bWeapon = (EquipmentManager->GetCurrentEquipmentType() == EEquipmentType::Rifle) || (EquipmentManager->GetCurrentEquipmentType() == EEquipmentType::Shotgun);
 	if ((IsAiming() || bWeapon) /*&& !GetMesh()->GetAnimInstance()->IsAnyMontagePlaying()*/)
 	{
@@ -225,11 +250,144 @@ bool AMyGameCharacter::ShouldDoLeftHandIK() const
 		return false;
 	}
 }
-//
-//FText AMyGameCharacter::GetAmmoText() const
-//{
-//	return ShootingSystem->GetAmmoText();
-//}
+
+
+EGait AMyGameCharacter::GetDesiredGait() const
+{
+	// If character is sprinting, keep sprinting.
+	if (bWantsToSprint && CanSprint())
+	{
+		return EGait::Sprint;
+	}
+
+	EGait DesiredGait = EGait::Walk;
+	if (bForecedToWalk)
+	{
+		DesiredGait = EGait::Walk;
+	}
+	else
+	{
+		// Decide gait based on threshold
+		FVector2D InputValue = InputSystem->GetLStickActionValue().Get<FVector2D>();
+		if (InputValue.Length() >= AnalogInputWalkRunThreshold)
+		{
+			DesiredGait = EGait::Run;
+		}
+		else
+		{
+			DesiredGait = EGait::Walk;
+		}
+	}
+	return DesiredGait;
+}
+
+float AMyGameCharacter::CalculateMaxAcceleration() const
+{
+	float Value = InputSystem->GetLStickActionValue().Get<FVector2D>().Length();
+	float MaxAcceleration = 600.0f;
+	if (Gait == EGait::Sprint)
+	{
+		FVector2D InRange = FVector2D(300.0f, 700.0f);
+		FVector2D OutRange = FVector2D(600.0f, 300.0f);
+		MaxAcceleration = FMath::GetMappedRangeValueClamped(InRange, OutRange, Value);
+	}
+	return MaxAcceleration;
+}
+
+float AMyGameCharacter::CalculateBrakingDeceleration() const
+{
+	float BrakingDeceleration = 2000.0f;
+	if (GetPendingMovementInputVector().Length() != 0)
+	{
+		BrakingDeceleration = 500.0f;
+	}
+	return BrakingDeceleration;
+}
+
+float AMyGameCharacter::CalculateGroundFriction() const
+{
+	float GroundFriction = 5.0f;
+	if (Gait == EGait::Sprint)
+	{
+		float Value = GetCharacterMovement()->Velocity.Length();
+		GroundFriction = FMath::GetMappedRangeValueClamped(FVector2D(0.0f, 500.0f), FVector2D(5.0f, 3.0f), Value);
+	}
+	return GroundFriction;
+}
+
+FVector2D AMyGameCharacter::CalculateMaxSpeed() const
+{
+	FVector Velocity = GetCharacterMovement()->Velocity;
+	FRotator BaseRotation = GetActorRotation();
+	float Direction = UKismetAnimationLibrary::CalculateDirection(Velocity, BaseRotation);
+	float StrafeSpeedMap = StrafeSpeedMapCurve->GetFloatValue(FMath::Abs(Direction));
+
+	FMovementSpeeds MovementSpeeds;
+	if (MotionMode == EMotionMode::Locomotion && !bIsArmed)
+	{
+		MovementSpeeds = MovementSpeedsSet.NormalSpeeds;
+	}
+	else if (MotionMode == EMotionMode::Locomotion)
+	{
+		MovementSpeeds = MovementSpeedsSet.ArmedSpeeds;
+	}
+	else if (MotionMode == EMotionMode::Aiming)
+	{
+		MovementSpeeds = MovementSpeedsSet.AimingSpeeds;
+	}
+
+	FVector MaxSpeeds = FVector::Zero();
+	FVector MaxCrouchSpeeds = FVector::Zero();
+
+	switch (Gait)
+	{
+	case EGait::Walk:
+		MaxSpeeds = MovementSpeeds.WalkSpeeds;
+		break;
+	case EGait::Run:
+		MaxSpeeds = MovementSpeeds.RunSpeeds;
+		break;
+	case EGait::Sprint:
+		MaxSpeeds = MovementSpeeds.SprintSpeeds;
+		break;
+	default:
+		break;
+	}
+
+	MaxCrouchSpeeds = MovementSpeeds.CrouchSpeeds;
+
+	float ReturnMaxSpeed = 0.0f;
+	float ReturnMaxCrouchSpeed = 0.0f;
+	if (StrafeSpeedMap < 1)
+	{
+		ReturnMaxSpeed = FMath::GetMappedRangeValueClamped(FVector2D(0.0f, 1.0f), FVector2D(MaxSpeeds.X, MaxSpeeds.Y), StrafeSpeedMap);
+		ReturnMaxCrouchSpeed = FMath::GetMappedRangeValueClamped(FVector2D(0.0f, 1.0f), FVector2D(MaxCrouchSpeeds.X, MaxCrouchSpeeds.Y), StrafeSpeedMap);
+	}
+	else
+	{
+		ReturnMaxSpeed = FMath::GetMappedRangeValueClamped(FVector2D(1.0f, 2.0f), FVector2D(MaxSpeeds.Y, MaxSpeeds.Z), StrafeSpeedMap);
+		ReturnMaxCrouchSpeed = FMath::GetMappedRangeValueClamped(FVector2D(1.0f, 2.0f), FVector2D(MaxCrouchSpeeds.Y, MaxCrouchSpeeds.Z), StrafeSpeedMap);
+	}
+
+	return FVector2D(ReturnMaxSpeed, ReturnMaxCrouchSpeed);
+}
+
+bool AMyGameCharacter::CanSprint() const
+{
+	FVector Direction =GetCharacterMovement()->GetCurrentAcceleration();
+	if (!Direction.IsNearlyZero())
+	{
+		Direction = Direction.GetSafeNormal();
+		FRotator Rotator = UKismetMathLibrary::MakeRotFromX(Direction);
+		FRotator DeltaRotation = UKismetMathLibrary::NormalizedDeltaRotator(GetActorRotation(), Rotator);
+
+		return FMath::Abs(DeltaRotation.Yaw) < 50.0f;
+	}
+
+	return false;
+}
+
+
 
 void AMyGameCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -237,11 +395,11 @@ void AMyGameCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 }
 
 
-void AMyGameCharacter::CameDistanceTimelineReturn(float value)
+void AMyGameCharacter::CrouchTimelineReturn(float value)
 {
 	//CameraBoom->TargetArmLength = FMath::Lerp(WALK_CAMERA_DISTANCE, CROUCH_CAMERA_DISTANCE, value);
-	//GetCapsuleComponent()->SetCapsuleHalfHeight(FMath::Lerp(WALK_CAPSULE_HEIGHT, CROUCH_CAPSULE_HEIGHT, value));
-	//GetMesh()->SetRelativeLocation(FVector(0, 0, FMath::Lerp(-90.0f, -60.0f, value)));
+	//GetCapsuleComponent()->SetCapsuleHalfHeight(FMath::Lerp(60.0f, 90.0f, value));
+	//GetMesh()->SetRelativeLocation(FVector(0, 0, FMath::Lerp(-60.0f, -90.0f, value)));
 }
 
 void AMyGameCharacter::Vault()
@@ -252,7 +410,7 @@ void AMyGameCharacter::Vault()
 	// Horizontal forward trace
 	for (int i = 0; i < 3; i++)
 	{
-		FVector Start = GetActorLocation() + FVector(0, 0, 30.0f * i) + GetActorForwardVector()*30.0f;
+		FVector Start = GetActorLocation() + FVector(0, 0, 30.0f * i) + GetActorForwardVector() * 30.0f;
 		FVector End = Start + GetActorForwardVector() * VAULT_DETECT_DISTANCE;
 		FHitResult HitResult;
 		if (UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, 5, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true))
@@ -274,7 +432,7 @@ void AMyGameCharacter::Vault()
 			FVector Start = HitLocation + FVector(0, 0, 100) + GetActorForwardVector() * 50 * i;
 			FVector End = Start + FVector(0, 0, -100);
 			FHitResult HitResult;
-			if (UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, 10, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true,FLinearColor::Green,FLinearColor::Red))
+			if (UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, 10, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true, FLinearColor::Green, FLinearColor::Red))
 			{
 				if (i == 0) // Valut start point
 				{
@@ -291,13 +449,13 @@ void AMyGameCharacter::Vault()
 			}
 			else // Vault land point
 			{
-				
+
 				Start = GetActorForwardVector() * VAULT_LAND_DISTANCE + HitResult.TraceEnd;
 				End = Start + FVector(0, 0, -1000);
-				if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), Start, End, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true,FLinearColor::Blue,FLinearColor::Red))
+				if (UKismetSystemLibrary::LineTraceSingle(GetWorld(), Start, End, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true, FLinearColor::Blue, FLinearColor::Red))
 				{
 					VaultLandPos = HitResult.Location;
-					FVector MeshLocation= GetMesh()->K2_GetComponentLocation();
+					FVector MeshLocation = GetMesh()->K2_GetComponentLocation();
 					if (VaultLandPos.Z < MeshLocation.Z + 50 && VaultLandPos.Z > MeshLocation.Z - 50) // Avoid landing position too high or too low
 					{
 						bHasLandPos = true;
@@ -328,44 +486,38 @@ void AMyGameCharacter::Assassinate()
 		Target->Name = FName("AssassinateWarp");
 		Target->Location = RefLocation;
 		Target->Rotation = AssassinateRotation;
-		MotionWarpingComponent->AddOrUpdateWarpTarget(*Target);
+		MotionWarping->AddOrUpdateWarpTarget(*Target);
 
 		UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 		AnimInstance->Montage_Play(AssassinateMontage);
 	}
 }
 
-void AMyGameCharacter::SprintStart()
-{
-	//UCharacterMovementComponent* Movement = GetCharacterMovement();
-	//if (MyMovementMode==EMyMovementMode::Crouching)
-	//{
-	//	ToggleCrouch(); //Cancel crouch
-	//}
-	//Movement->MaxWalkSpeed = SPRINT_MAX_WALK_SPEED;
-}
-
-void AMyGameCharacter::SprintEnd()
-{
-	/*UCharacterMovementComponent* Movement = GetCharacterMovement();
-	Movement->MaxWalkSpeed = MAX_WALK_SPEED;*/
-}
-
 void AMyGameCharacter::StartFiring()
 {
-	if (MyMovementMode == EMyMovementMode::Aiming)
+	if (MotionMode == EMotionMode::Aiming)
 	{
 		// Enable firing
 		ShootingSystem->bShouldFire = true;
 		//ShootingSystem->SetComponentTickEnabled(true);
 	}
-} 
+}
 
 void AMyGameCharacter::StopFiring()
 {
 	// Disable firing
 	//ShootingSystem->SetComponentTickEnabled(false);
 	ShootingSystem->bShouldFire = false;
+}
+
+void AMyGameCharacter::StartSprinting()
+{
+	bWantsToSprint = true;
+}
+
+void AMyGameCharacter::StopSprinting()
+{
+	bWantsToSprint = false;
 }
 
 void AMyGameCharacter::Reload()
@@ -403,7 +555,7 @@ void AMyGameCharacter::ToggleLock()
 	if (IsValid(LockedTarget))
 	{
 		LockedTarget = nullptr;
-		MyMovementMode = EMyMovementMode::Locomotion;
+		MotionMode = EMotionMode::Locomotion;
 		return;
 	}
 
@@ -421,7 +573,7 @@ void AMyGameCharacter::ToggleLock()
 			if (HitResult.GetActor()->ActorHasTag(TEXT("Enemy")))
 			{
 				LockedTarget = Cast<ACharacter>(HitResult.GetActor());
-				MyMovementMode = EMyMovementMode::Attacking;
+				MotionMode = EMotionMode::Attacking;
 				return;
 			}
 		}
@@ -483,26 +635,26 @@ void AMyGameCharacter::VaultMotionWarp()
 {
 	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Flying);
 	SetActorEnableCollision(false);
-	MyMovementMode = EMyMovementMode::Vaulting;
+	MotionMode = EMotionMode::Vaulting;
 
 	// Set vault start
 	FMotionWarpingTarget* StartTarget = new FMotionWarpingTarget();
 	StartTarget->Name = FName("VaultStart");
 	StartTarget->Location = VaultStartPos;
 	StartTarget->Rotation = GetActorRotation();
-	MotionWarpingComponent->AddOrUpdateWarpTarget(*StartTarget);
+	MotionWarping->AddOrUpdateWarpTarget(*StartTarget);
 	// Set vault middle
 	FMotionWarpingTarget* MiddleTarget = new FMotionWarpingTarget();
 	MiddleTarget->Name = FName("VaultMiddle");
 	MiddleTarget->Location = VaultMidPos;
 	MiddleTarget->Rotation = GetActorRotation();
-	MotionWarpingComponent->AddOrUpdateWarpTarget(*MiddleTarget);
+	MotionWarping->AddOrUpdateWarpTarget(*MiddleTarget);
 	// Set vault land
 	FMotionWarpingTarget* LandTarget = new FMotionWarpingTarget();
 	LandTarget->Name = FName("VaultLand");
 	LandTarget->Location = VaultLandPos;
 	LandTarget->Rotation = GetActorRotation();
-	MotionWarpingComponent->AddOrUpdateWarpTarget(*LandTarget);
+	MotionWarping->AddOrUpdateWarpTarget(*LandTarget);
 
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 	AnimInstance->Montage_Play(VaultMontage);
@@ -513,13 +665,13 @@ void AMyGameCharacter::OnVaultMontageEnd()
 {
 	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
 	SetActorEnableCollision(true);
-	MyMovementMode = EMyMovementMode::Locomotion;
+	MotionMode = EMotionMode::Locomotion;
 }
 
 void AMyGameCharacter::OnRollMontageEnd()
 {
-//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
-	MyMovementMode = EMyMovementMode::Locomotion;
+	//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
+	MotionMode = EMotionMode::Locomotion;
 	//SetActorEnableCollision(true);
 }
 
@@ -536,7 +688,7 @@ void AMyGameCharacter::Dead()
 
 	// Decide which montage to play
 	UAnimMontage* Montage = nullptr;
-	if (MyMovementMode == EMyMovementMode::Aiming)
+	if (MotionMode == EMotionMode::Aiming)
 	{
 		// Stop aiming before death
 		StopAiming();
@@ -583,9 +735,12 @@ void AMyGameCharacter::Jump()
 {
 	if (bIsCrouched)
 	{
-		Crouch(); // Cancel crouch
+		UnCrouch();
 	}
-	Super::Jump();
+	else
+	{
+		Super::Jump();
+	}
 }
 
 void AMyGameCharacter::Move(const FInputActionValue& Value)
@@ -620,7 +775,7 @@ void AMyGameCharacter::Move(const FInputActionValue& Value)
 				}
 				else if(MovementVector.X==0)
 				{
-					
+
 				}
 				else
 				{
@@ -639,7 +794,7 @@ void AMyGameCharacter::Look(const FInputActionValue& Value)
 	// input is a Vector2D
 	FVector2D LookAxisVector = Value.Get<FVector2D>();
 
-	if (MyMovementMode == EMyMovementMode::Aiming)
+	if (MotionMode == EMotionMode::Aiming)
 	{
 		LookAxisVector.X *= AimingSensitivityYaw;
 		LookAxisVector.Y *= AimingSensitivityPitch;
@@ -666,10 +821,17 @@ void AMyGameCharacter::Melee()
 
 void AMyGameCharacter::StartAiming()
 {
-	MyMovementMode = EMyMovementMode::Aiming;
+	MotionMode = EMotionMode::Aiming;
 	bForecedToWalk = true;
-	//CameraBoom->bEnableCameraRotationLag = false;
-	CameraState = ECameraState::Aiming;
+	if (bIsCrouched)
+	{
+		CameraState = ECameraState::Crouch_Aiming;
+	}
+	else
+	{
+		CameraState = ECameraState::Aiming;
+	}
+
 
 	// Play idle camera shake
 	APlayerController* PlayerController = Cast<APlayerController>(GetController());
@@ -678,21 +840,40 @@ void AMyGameCharacter::StartAiming()
 		PlayerController->ClientStartCameraShake(AimingCameraShakeClass);
 	}
 
-	if (MyGameInstance.IsValid()) 
+	if (MyGameInstance.IsValid())
 	{
 		UMyGameInstance* GameInstancePtr = MyGameInstance.Get();
 		GameInstancePtr->ToggleShootingWidget();
 		EquipmentManager->AttachEquipmentToSocket(EEquipmentSocket::Aiming);
 	}
+
+
+
+	// Rotate character a little bit to be more nature
+	if (bIsCrouched)
+	{
+		GetMesh()->SetRelativeRotation(FRotator(0.0f, -86.0f, -2.0f));
+	}
+	else
+	{
+		GetMesh()->SetRelativeRotation(FRotator(0.0f, -86.0f, 0.0f));
+	}
 }
 
 void AMyGameCharacter::StopAiming()
 {
-	MyMovementMode = EMyMovementMode::Locomotion;
+	MotionMode = EMotionMode::Locomotion;
 	bForecedToWalk = false;
 	CameraBoom->bEnableCameraRotationLag = true;
-	CameraState = ECameraState::Normal;
-	
+	if (bIsCrouched)
+	{
+		CameraState = ECameraState::Crouch_Normal;
+	}
+	else
+	{
+		CameraState = ECameraState::Normal;
+	}
+
 	// Stop idle camera shake
 	APlayerController* PlayerController = Cast<APlayerController>(GetController());
 	if (PlayerController)
@@ -707,35 +888,54 @@ void AMyGameCharacter::StopAiming()
 		EquipmentManager->AttachEquipmentToSocket(EEquipmentSocket::Holding);
 	}
 
+	// Reset rotation
+	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+
 	// No shooting if not aiming
 	StopFiring();
 }
 
-void AMyGameCharacter::Crouch(bool bClientSimulation)
+void AMyGameCharacter::ToggleCrouched()
 {
-	bIsCrouched = ~bIsCrouched;
-	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	if (bIsCrouched)
 	{
-		//Movement->MaxWalkSpeed = CROUCH_MAX_SPEED;
+		// If there's obstacle above the character, remain crouched
+		FVector Start = GetActorLocation() + GetActorUpVector() * UNCROUCH_TRACE_DISTANCE;
+		FVector End = Start;
+		FHitResult HitResult;
+		if (!UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, UNCROUCH_TRACE_SIZE, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true, FLinearColor::Red, FLinearColor::Green, 5.0f))
+		{
+			UnCrouch();
+			CrouchTimeline.PlayFromStart();
+
+			if (IsAiming())
+			{
+				CameraState = ECameraState::Aiming;
+				GetMesh()->SetRelativeRotation(FRotator(0.0f, -86.0f, 0.0f));
+			}
+			else
+			{
+				CameraState = ECameraState::Normal;
+				GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+			}
+		}
 	}
 	else
 	{
-		// If there's obstacle above the character, remain crouching
-		FVector Start = GetActorLocation();
-		FVector End = GetActorLocation() + GetActorUpVector() * UNCROUCH_TRACE_DISTANCE;
-		FHitResult HitResult;
-		GetMesh()->SetCollisionProfileName(TEXT("CharacterMesh")); // Avoid ray being blocked on charactermesh
-		if (UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, UNCROUCH_TRACE_SIZE, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true))
-		{
-			bIsCrouched = true;
-			GetMesh()->SetCollisionProfileName(TEXT("IgnoreOnlyPawn"));
-			return;
-		}
-		GetMesh()->SetCollisionProfileName(TEXT("IgnoreOnlyPawn"));
-	}
+		Crouch();
+		CrouchTimeline.ReverseFromEnd();
 
-	Super::Crouch(bClientSimulation);
+		if (IsAiming())
+		{
+			CameraState = ECameraState::Crouch_Aiming;
+			GetMesh()->SetRelativeRotation(FRotator(0.0f, -86.0f, -2.0f));
+		}
+		else
+		{
+			CameraState = ECameraState::Crouch_Normal;
+			GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+		}
+	}
 }
 
 void AMyGameCharacter::Ragdoll()
@@ -743,5 +943,5 @@ void AMyGameCharacter::Ragdoll()
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
 	GetCapsuleComponent()->SetCollisionProfileName(TEXT("NoCollision"));
 	GetMesh()->SetSimulatePhysics(true);
-	isDead = true;
+	bIsDead = true;
 }

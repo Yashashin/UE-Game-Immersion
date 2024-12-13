@@ -76,7 +76,7 @@ void UInteractSystem::PickItem()
 		FMotionWarpingTarget* Target = new FMotionWarpingTarget();
 		Target->Name = FName("Pick Item Target");
 		Target->Rotation = LookAtRotation;
-		MyGameCharacterPtr->MotionWarpingComponent->AddOrUpdateWarpTarget(*Target);
+		MyGameCharacterPtr->MotionWarping->AddOrUpdateWarpTarget(*Target);
 
 		// Play pick item montage
 		UAnimInstance* AnimInstance = MyGameCharacterPtr->GetMesh()->GetAnimInstance();
