@@ -156,7 +156,8 @@ void AMyGameCharacter::Tick(float DeltaTime)
 	{
 		CrouchTimeline.TickTimeline(DeltaTime);
 	}
-
+	FVector2D InputValue = InputSystem->GetLStickActionValue().Get<FVector2D>();
+	UE_LOG(LogTemp, Warning, TEXT("%f"), InputValue.Length());
 	UpdateGait();
 }
 
@@ -269,6 +270,7 @@ EGait AMyGameCharacter::GetDesiredGait() const
 	{
 		// Decide gait based on threshold
 		FVector2D InputValue = InputSystem->GetLStickActionValue().Get<FVector2D>();
+		UE_LOG(LogTemp, Warning, TEXT("%f"), InputValue.Length());
 		if (InputValue.Length() >= AnalogInputWalkRunThreshold)
 		{
 			DesiredGait = EGait::Run;
@@ -903,7 +905,7 @@ void AMyGameCharacter::ToggleCrouched()
 		FVector Start = GetActorLocation() + GetActorUpVector() * UNCROUCH_TRACE_DISTANCE;
 		FVector End = Start;
 		FHitResult HitResult;
-		if (!UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, UNCROUCH_TRACE_SIZE, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true, FLinearColor::Red, FLinearColor::Green, 5.0f))
+		if (!UKismetSystemLibrary::SphereTraceSingle(GetWorld(), Start, End, UNCROUCH_TRACE_SIZE, ETraceTypeQuery::TraceTypeQuery1, false, TArray<AActor*>(), EDrawDebugTrace::Type::ForDuration, HitResult, true, FLinearColor::Red, FLinearColor::Green, -1.0f))
 		{
 			UnCrouch();
 			CrouchTimeline.PlayFromStart();

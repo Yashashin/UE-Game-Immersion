@@ -108,7 +108,7 @@ public:
 	bool bIsArmed = false;
 
 	// Should character forced to walk?
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character State")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Character State")
 	bool bForecedToWalk = false;
 
 	// Should enable turn in place?
@@ -198,7 +198,7 @@ public:
 	// Threshold for walk and run. Stick analog below this value is walking and above this is running. 
 	// Sprinting does not take this value into account.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings | Developer", meta = (ClampMin = 0.1, ClampMax = 0.9)) // Set in blueprint
-		float AnalogInputWalkRunThreshold = 0.5f;
+		float AnalogInputWalkRunThreshold = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings | Developer") // Set in blueprint
 		FMovementSpeedsSet MovementSpeedsSet;
